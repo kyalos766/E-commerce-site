@@ -7,6 +7,7 @@ const emptyState = {
   orders: [],
   cart: [],
   categories: ["Fashion", "Home", "Accessories"],
+  liveSessions: [],
   session: null
 };
 
@@ -19,6 +20,7 @@ let searchQuery = "";
 let checkoutMethod = "stk";
 let productImagePreviewUrl = "";
 let pendingProductDraft = null;
+let pendingLiveProductIds = [];
 
 function loadState() {
   try {
@@ -28,7 +30,7 @@ function loadState() {
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new Error("Saved data has an invalid format.");
     const accounts = (Array.isArray(parsed.accounts) ? parsed.accounts : []).filter((account) =>
       account && typeof account.id === "string" && typeof account.name === "string" &&
-      typeof account.email === "string" && ["seller", "buyer"].includes(account.type)
+      typeof account.email === "string" && ["seller", "buyer", "admin"].includes(account.type)
     ).map((account) => ({
       ...account,
       status: safeStatusClass(account.status, ["active", "blocked"]),
@@ -59,6 +61,7 @@ return {
       categories: Array.isArray(parsed.categories) && parsed.categories.length
         ? parsed.categories.map((category) => String(category).trim()).filter((category) => category.length > 0)
         : structuredClone(emptyState.categories),
+      liveSessions: Array.isArray(parsed.liveSessions) ? parsed.liveSessions.filter((session) => session && typeof session.id === "string" && typeof session.sellerId === "string" && typeof session.platform === "string" && Array.isArray(session.productIds)) : [],
       session: typeof parsed.session === "string" && accounts.some((account) => account.id === parsed.session) ? parsed.session : null
     };
   } catch (error) {
@@ -142,8 +145,8 @@ function render() {
   const app = document.getElementById("app");
   if (!app) return;
   const user = currentUser();
-  if (user?.type === "buyer" && !["discover", "orders", "profile", "help"].includes(activeTab)) activeTab = "discover";
-  if (user?.type === "seller" && !["overview", "products", "orders", "referrals", "profile", "help", "categories"].includes(activeTab)) activeTab = "overview";
+  if (user?.type === "buyer" && !["discover", "live", "orders", "profile", "help"].includes(activeTab)) activeTab = "discover";
+  if (user?.type === "seller" && !["overview", "products", "orders", "live", "referrals", "profile", "help", "categories", "admin"].includes(activeTab)) activeTab = user?.type === "admin" ? "admin" : "overview";
   app.innerHTML = user ? renderDashboard(user) : renderAuth();
   const footer = document.createElement("footer");
   footer.className = "site-footer";
@@ -175,7 +178,7 @@ function renderAuth() {
           <form id="auth-form">
             ${signup ? `<div class="field"><label for="full-name">Full name</label><input id="full-name" name="name" autocomplete="name" placeholder="e.g. Nia Kamau" required></div><div class="field"><label for="phone">Phone number</label><input id="phone" name="phone" type="tel" autocomplete="tel" placeholder="e.g. 0712 345 678" required></div>` : ""}
             <div class="field"><label for="email">Email address</label><input id="email" name="email" type="email" autocomplete="email" placeholder="you@example.com" required></div>
-            ${signup ? `
+${signup ? `
               <div class="field">
                 <label>Choose your account type</label>
                 <div class="account-choices">
@@ -184,7 +187,7 @@ function renderAuth() {
                 </div>
               </div>
               ${selectedType === "buyer" ? `<div class="field"><label for="referral">Seller referral code <span class="field-hint">(optional)</span></label><input id="referral" name="referral" maxlength="32" placeholder="Enter a code if a seller referred you"></div>` : ""}
-              <div class="note"><span>♧</span><span>${selectedType === "seller" ? "Get a unique referral code to share with your customers." : "Optionally enter a seller’s referral code to connect your account."}</span></div>
+              <div class="note"><span>♤</span><span>${selectedType === "seller" ? "Get a unique referral code to share with your customers." : "Optionally enter a seller's referral code to connect your account."}</span></div>
             ` : ""}
             <button type="submit" class="btn btn-primary full">${signup ? "Create account" : "Continue to your account"} <span>→</span></button>
           </form>
@@ -199,11 +202,26 @@ function navButton(tab, icon, label) {
 }
 
 function renderDashboard(user) {
+  if (user?.type === "admin") {
+    return `
+      <div class="app-shell">
+        <aside class="sidebar" id="sidebar">
+          <div class="brand"><span class="brand-mark">m</span> MarketHub</div>
+          <p class="side-label">Admin workspace</p>
+          <nav class="nav-list">${navButton("admin", "★", "Admin console")}</nav>
+        </aside>
+        <main class="main-area">
+          <div class="topbar"><div><h1>Admin console</h1><p class="subtle">Platform overview and account management.</p></div><div class="top-actions"><button class="icon-button" id="top-profile" title="Sign out" data-action="logout">↘</button></div></div>
+          <div class="dashboard-grid"><div class="main-col">${renderAdmin(user)}</div></div>
+        </main>
+      </div>
+    `;
+  }
   const seller = user.type === "seller";
   const title = seller ? "Seller studio" : "Your marketplace";
 const nav = seller
-    ? `${navButton("overview", "≡", "Overview")}${navButton("products", "▦", "My products")}${navButton("categories", "▦", "Categories")}${navButton("orders", "▤", "Orders")}${navButton("referrals", "◎", "Referrals")}${navButton("profile", "⚙", "Profile settings")}${navButton("help", "◈", "Help & support")}`
-    : `${navButton("discover", "⌕", "Discover goods")}${navButton("orders", "▤", "My orders")}${navButton("profile", "⚙", "Profile settings")}${navButton("help", "◈", "Help & support")}`;
+    ? `${navButton("overview", "≡", "Overview")}${navButton("products", "▦", "My products")}${navButton("categories", "▦", "Categories")}${navButton("orders", "▤", "Orders")}${navButton("live", "◎", "Live sessions")}${navButton("referrals", "◎", "Referrals")}${navButton("profile", "⚙", "Profile settings")}${navButton("help", "◈", "Help & support")}${user?.type === "admin" ? `${navButton("admin", "★", "Admin console")}` : ""}`
+    : `${navButton("discover", "⌕", "Discover goods")}${navButton("live", "◎", "Live sessions")}${navButton("orders", "▤", "My orders")}${navButton("profile", "⚙", "Profile settings")}${navButton("help", "◈", "Help & support")}${user?.type === "admin" ? `${navButton("admin", "★", "Admin console")}` : ""}`;
   let content = "";
   if (seller) {
     if (activeTab === "overview") content = renderSellerOverview(user);
@@ -213,8 +231,10 @@ const nav = seller
     if (activeTab === "profile") content = renderProfile(user);
     if (activeTab === "help") content = renderHelp(user);
     if (activeTab === "categories") content = renderCategories(user);
+    if (activeTab === "live") content = renderLive(user);
   } else {
     if (activeTab === "discover") content = renderStorefront();
+    if (activeTab === "live") content = renderLive(user);
     if (activeTab === "orders") content = renderOrders(user, false);
     if (activeTab === "profile") content = renderProfile(user);
     if (activeTab === "help") content = renderHelp(user);
@@ -306,6 +326,83 @@ function renderStorefront() {
       const waLink = sellerPhone ? `https://wa.me/${sellerPhone}?text=${encodeURIComponent(`Hi, I'm interested in your product: ${item.name}`)}` : "";
       return `<article class="product-card"><div class="product-image-wrap"><img class="product-image" src="${escapeHtml(safeImageSource(item.image))}" alt="${escapeHtml(item.name)}"><span class="product-tag">${escapeHtml(item.tag || item.category)}</span></div><div class="product-info"><h3>${escapeHtml(item.name)}</h3><p class="seller-name">by ${sellerLabel}</p><div class="product-bottom"><span class="product-price">${money(item.price)}</span><button class="add-cart" data-action="add-cart" data-id="${escapeHtml(item.id)}" aria-label="Add ${escapeHtml(item.name)} to cart" ${item.stock < 1 ? "disabled" : ""}>${item.stock < 1 ? "Sold out" : "＋"}</button></div></div><div class="product-footer"><span class="product-tag">${escapeHtml(item.tag || item.category)}</span>${waLink ? `<a class="whatsapp-btn" href="${waLink}" target="_blank" rel="noopener" aria-label="Chat ${sellerLabel} on WhatsApp">📞 WhatsApp</a>` : `<span class="whatsapp-btn disabled">No WhatsApp</span>`}</div></article>`;
     }).join("")}</div>` : `<div class="panel empty-state category-empty"><strong>${state.products.length ? "No matching products found." : "No products are listed yet."}</strong>${state.products.length ? "Try a different search or category." : "Check back soon as sellers add their products."}</div>`}`;
+}
+
+function renderLive(user) {
+  const seller = user.type === "seller";
+  const mySessions = seller ? state.liveSessions.filter((session) => session.sellerId === user.id) : state.liveSessions.filter((session) => session.active);
+  const platforms = [
+    { id: "facebook", label: "Facebook Live", url: "https://www.facebook.com/" },
+    { id: "instagram", label: "Instagram Live", url: "https://www.instagram.com/" },
+    { id: "tiktok", label: "TikTok Live", url: "https://www.tiktok.com/" },
+    { id: "youtube", label: "YouTube Live", url: "https://www.youtube.com/" },
+    { id: "whatsapp", label: "WhatsApp Call", url: "https://web.whatsapp.com/" },
+    { id: "x", label: "X (Twitter) Live", url: "https://twitter.com/" }
+  ];
+if (seller) {
+    const products = sellerProducts(user);
+    const productCount = products.length;
+    const selectedCount = pendingLiveProductIds ? pendingLiveProductIds.length : 0;
+    const selectedLabel = selectedCount ? `${selectedCount} product${selectedCount === 1 ? "" : "s"} selected` : "No products selected yet";
+    const productButtonLabel = productCount ? `Select products · ${escapeHtml(selectedLabel)}` : "Add products first";
+    return `
+      <div class="page-lead"><div><h1 class="content-title">Live sessions</h1><p class="subtle" style="margin:6px 0 0">Show products on social media live streams and let buyers order them in real time.</p></div></div>
+      <section class="panel">
+        <div class="panel-heading"><div><h2>Start a live session</h2><p>Pick a platform, then choose the products you want to feature on your live shelf.</p></div></div>
+        <form id="live-form"><div class="field"><label for="live-platform">Platform</label><select id="live-platform" name="platform" required>${platforms.map((platform) => `<option value="${platform.id}">${platform.label}</option>`).join("")}</select></div><div class="field"><label for="live-products">Products to show</label><button type="button" class="btn btn-soft full" id="live-select-products">${productButtonLabel}</button><input type="hidden" id="live-product-ids" name="productIds" value=""></div><div class="modal-actions"><button type="button" class="btn btn-outline" data-action="close-modal">Cancel</button><button class="btn btn-primary" type="submit">Start session</button></div></form>
+      </section>
+      <section class="panel">
+        <div class="panel-heading"><div><h2>Your live sessions</h2><p>Active sessions auto-clear their products once you end them.</p></div></div>
+        ${mySessions.length ? `<div class="category-grid">${mySessions.map((session) => {
+          const platform = platforms.find((platform) => platform.id === session.platform) || { label: session.platform, url: "#" };
+          const sessionProducts = session.productIds.map((id) => state.products.find((product) => product.id === id)).filter(Boolean);
+          const liveLink = session.active ? platform.url : "#";
+          const liveTarget = session.active ? `href="${liveLink}" target="_blank" rel="noopener"` : "";
+          return `<div class="category-card"><div><span class="category-name">${escapeHtml(platform.label)}</span><small>${sessionProducts.length} product${sessionProducts.length === 1 ? "" : "s"} · ${session.active ? "LIVE" : "Ended"}</small></div><div class="inline-actions">${session.active ? `<a class="btn btn-soft" style="min-height:30px;padding:0 10px;font-size:10px" ${liveTarget}>▶ Go live</a>` : ""}<button class="btn btn-quiet" style="min-height:30px;padding:0 10px;font-size:10px" data-action="view-live-products" data-id="${escapeHtml(session.id)}">View</button><button class="btn btn-danger" style="min-height:30px;padding:0 10px;font-size:10px" data-action="end-live-session" data-id="${escapeHtml(session.id)}">${session.active ? "End session" : "Delete"}</button></div></div>`;
+        }).join("")}</div>` : `<div class="empty-state"><strong>No live sessions yet</strong>Start a session to show products on social media.</div>`}
+      </section>
+    `;
+  }
+  return `
+    <div class="page-lead"><div><h1 class="content-title">Live sessions</h1><p class="subtle" style="margin:6px 0 0">Shop what sellers are showing right now on their live streams.</p></div></div>
+    ${mySessions.length ? `<div class="category-grid">${mySessions.map((session) => {
+      const platform = platforms.find((platform) => platform.id === session.platform) || { label: session.platform, url: "#" };
+      const seller = state.accounts.find((account) => account.id === session.sellerId);
+      const sellerName = seller ? seller.name.trim().split(/\s+/)[0] : "A seller";
+      const sessionProducts = session.productIds.map((id) => state.products.find((product) => product.id === id)).filter(Boolean);
+      return `<div class="category-card"><div><span class="category-name">${escapeHtml(platform.label)}</span><small>by ${escapeHtml(sellerName)} · ${sessionProducts.length} product${sessionProducts.length === 1 ? "" : "s"}</small></div><div class="inline-actions"><button class="btn btn-soft" style="min-height:30px;padding:0 10px;font-size:10px" data-action="view-live-products" data-id="${escapeHtml(session.id)}">View products</button></div></div>`;
+    }).join("")}</div>` : `<div class="panel empty-state"><strong>No live sessions running</strong>Check back once a seller goes live.</div>`}
+`;
+}
+
+function renderAdmin(user) {
+  const accounts = state.accounts;
+  const sellers = accounts.filter((account) => account.type === "seller");
+  const buyers = accounts.filter((account) => account.type === "buyer");
+  const totalRevenue = state.orders.reduce((sum, order) => sum + (Number(order.total) || 0), 0);
+  const activeSessions = state.liveSessions.filter((session) => session.active).length;
+  return `
+    <div class="page-lead"><div><h1 class="content-title">Admin console</h1><p class="subtle" style="margin:6px 0 0">Platform overview and account management.</p></div></div>
+    <div class="stats-grid">
+      <div class="stat-card"><div class="stat-top"><span>Sellers</span><span class="stat-icon">◎</span></div><b class="stat-value">${String(sellers.length).padStart(2, "0")}</b><span class="stat-foot">Registered seller accounts</span></div>
+      <div class="stat-card"><div class="stat-top"><span>Buyers</span><span class="stat-icon">♡</span></div><b class="stat-value">${String(buyers.length).padStart(2, "0")}</b><span class="stat-foot">Registered buyer accounts</span></div>
+      <div class="stat-card"><div class="stat-top"><span>Products</span><span class="stat-icon">▦</span></div><b class="stat-value">${String(state.products.length).padStart(2, "0")}</b><span class="stat-foot">Listed across all shops</span></div>
+      <div class="stat-card"><div class="stat-top"><span>Orders</span><span class="stat-icon">▤</span></div><b class="stat-value">${String(state.orders.length).padStart(2, "0")}</b><span class="stat-foot">Total value ${money(totalRevenue)}</span></div>
+      <div class="stat-card"><div class="stat-top"><span>Live sessions</span><span class="stat-icon">◎</span></div><b class="stat-value">${String(activeSessions).padStart(2, "0")}</b><span class="stat-foot">Active right now</span></div>
+    </div>
+    <section class="panel">
+      <div class="panel-heading"><div><h2>Sellers</h2><p>Activate or block seller accounts. Blocked sellers cannot sign in.</p></div></div>
+${sellers.length ? `<div class="table-wrap"><table><thead><tr><th>Seller</th><th>Phone</th><th>Email</th><th>Products</th><th>Status</th><th>Action</th></tr></thead><tbody>${sellers.map((account) => { const productCount = state.products.filter((product) => product.sellerId === account.id).length; const status = safeStatusClass(account.status, ["active", "blocked"]); return `<tr><td><strong>${escapeHtml(account.name)}</strong></td><td>${escapeHtml(account.phone || "—")}</td><td>${escapeHtml(account.email)}</td><td>${productCount}</td><td><span class="status ${status}">${status === "active" ? "Active" : "Blocked"}</span></td><td><div class="inline-actions"><button class="btn btn-quiet" style="min-height:30px;padding:0 10px;font-size:10px" data-action="toggle-account-status" data-id="${escapeHtml(account.id)}">${status === "active" ? "Block" : "Activate"}</button></div></tr>`; }).join("")}</tbody></table></div>` : `<div class="empty-state"><strong>No sellers yet</strong></div>`}
+    </section>
+    <section class="panel">
+      <div class="panel-heading"><div><h2>Buyers</h2><p>Activate or block buyer accounts.</p></div></div>
+      ${buyers.length ? `<div class="table-wrap"><table><thead><tr><th>Buyer</th><th>Phone</th><th>Email</th><th>Orders</th><th>Status</th><th>Action</th></tr></thead><tbody>${buyers.map((account) => { const orderCount = state.orders.filter((order) => order.buyerId === account.id).length; const status = safeStatusClass(account.status, ["active", "blocked"]); return `<tr><td><strong>${escapeHtml(account.name)}</strong></td><td>${escapeHtml(account.phone || "—")}</td><td>${escapeHtml(account.email)}</td><td>${orderCount}</td><td><span class="status ${status}">${status === "active" ? "Active" : "Blocked"}</span></td><td><div class="inline-actions"><button class="btn btn-quiet" style="min-height:30px;padding:0 10px;font-size:10px" data-action="toggle-account-status" data-id="${escapeHtml(account.id)}">${status === "active" ? "Block" : "Activate"}</button></div></tr>`; }).join("")}</tbody></table></div>` : `<div class="empty-state"><strong>No buyers yet</strong></div>`}
+    </section>
+    <section class="panel">
+      <div class="panel-heading"><div><h2>Recent orders</h2><p>Latest orders across the platform.</p></div></div>
+      ${state.orders.length ? `<div class="table-wrap"><table><thead><tr><th>Order</th><th>Buyer</th><th>Seller</th><th>Total</th><th>Status</th></tr></thead><tbody>${state.orders.slice(0, 20).map((order) => { const statusClass = safeStatusClass(order.status, ["pending", "received", "shipped"]); const statusLabel = statusClass.charAt(0).toUpperCase() + statusClass.slice(1); const seller = state.accounts.find((account) => account.id === order.sellerId); const sellerName = seller ? seller.name : (order.sellerId ? "Unknown seller" : "—"); return `<tr><td><b>${escapeHtml(order.id)}</b><br><span style="color:#9aa39d;font-size:10px">${escapeHtml(order.date || "")}</span></td><td>${escapeHtml(order.buyer || "Guest")}</td><td>${escapeHtml(sellerName)}</td><td>${money(order.total)}</td><td><span class="status ${statusClass}">${escapeHtml(statusLabel)}</span></tr>`; }).join("")}</tbody></table></div>` : `<div class="empty-state"><strong>No orders yet</strong></div>`}
+    </section>
+  `;
 }
 
 function paymentPlanForOrder(order) {
@@ -490,10 +587,63 @@ function openImageModal(product) {
   bindModalEvents();
 }
 
+function openLiveProductsModal(session) {
+  const root = document.getElementById("modal-root");
+  const platforms = [{ id: "facebook", label: "Facebook Live", url: "https://www.facebook.com/" }, { id: "instagram", label: "Instagram Live", url: "https://www.instagram.com/" }, { id: "tiktok", label: "TikTok Live", url: "https://www.tiktok.com/" }, { id: "youtube", label: "YouTube Live", url: "https://www.youtube.com/" }, { id: "whatsapp", label: "WhatsApp Call", url: "https://web.whatsapp.com/" }, { id: "x", label: "X (Twitter) Live", url: "https://twitter.com/" }];
+  const platform = platforms.find((platform) => platform.id === session.platform) || { label: session.platform, url: "#" };
+  const seller = state.accounts.find((account) => account.id === session.sellerId);
+  const sellerName = seller ? seller.name : "A seller";
+  const products = session.productIds.map((id) => state.products.find((product) => product.id === id)).filter(Boolean);
+  const rows = products.length ? products.map((product) => `<div class="live-product-row"><img src="${escapeHtml(safeImageSource(product.image))}" alt=""><div><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(product.category)} · ${money(product.price)} · ${product.stock} in stock</small></div><a class="btn btn-soft" style="min-height:30px;padding:0 10px;font-size:10px" href="https://wa.me/${(seller ? seller.phone : "").replace(/\D/g, "")}?text=${encodeURIComponent("Hi, I saw your live product " + product.name)}" target="_blank" rel="noopener">Chat seller</a></div>`).join("") : `<div class="empty-state"><strong>No products in this session</strong></div>`;
+  const liveLink = session.active ? platform.url : "#";
+  const liveTarget = session.active ? `href="${liveLink}" target="_blank" rel="noopener"` : "";
+  root.innerHTML = `<div class="modal-backdrop" id="modal-backdrop"><section class="modal live-modal"><button class="modal-close" data-action="close-modal" aria-label="Close">×</button><div class="live-modal-head"><div><h2>${escapeHtml(platform.label)}</h2><p>by ${escapeHtml(sellerName)} · ${session.active ? "LIVE" : "Ended"}</p></div>${session.active ? `<a class="btn btn-primary" style="min-height:38px;padding:0 14px;font-size:12px" ${liveTarget}>Go live on ${escapeHtml(platform.label)}</a>` : ""}</div><div class="live-modal-body">${rows}</div></section></div>`;
+  bindModalEvents();
+}
+
 function openCategoryModal() {
   const root = document.getElementById("modal-root");
   root.innerHTML = `<div class="modal-backdrop" id="modal-backdrop"><section class="modal"><h2>Add a category</h2><p>Give your new category a clear, short name. It will appear in your product dropdown.</p><div id="category-error" class="form-error" role="alert"></div><form id="category-form"><div class="field"><label for="new-category-name">Category name</label><input id="new-category-name" name="name" placeholder="e.g. Handmade ceramics" maxlength="40" required></div><div class="modal-actions"><button type="button" class="btn btn-outline" data-action="close-modal">Cancel</button><button class="btn btn-primary" type="submit">Add category</button></div></form></section></div>`;
   bindModalEvents();
+}
+
+function openLiveProductsModal(session) {
+  const root = document.getElementById("modal-root");
+  const platforms = [{ id: "facebook", label: "Facebook Live", url: "https://www.facebook.com/" }, { id: "instagram", label: "Instagram Live", url: "https://www.instagram.com/" }, { id: "tiktok", label: "TikTok Live", url: "https://www.tiktok.com/" }, { id: "youtube", label: "YouTube Live", url: "https://www.youtube.com/" }, { id: "whatsapp", label: "WhatsApp Call", url: "https://web.whatsapp.com/" }, { id: "x", label: "X (Twitter) Live", url: "https://twitter.com/" }];
+  const platform = platforms.find((platform) => platform.id === session.platform) || { label: session.platform, url: "#" };
+  const seller = state.accounts.find((account) => account.id === session.sellerId);
+  const sellerName = seller ? seller.name : "A seller";
+  const products = session.productIds.map((id) => state.products.find((product) => product.id === id)).filter(Boolean);
+  const rows = products.length ? products.map((product) => `<div class="live-product-row"><img src="${escapeHtml(safeImageSource(product.image))}" alt=""><div><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(product.category)} · ${money(product.price)} · ${product.stock} in stock</small></div><a class="btn btn-soft" style="min-height:30px;padding:0 10px;font-size:10px" href="https://wa.me/${(seller ? seller.phone : "").replace(/\D/g, "")}?text=${encodeURIComponent("Hi, I saw your live product " + product.name)}" target="_blank" rel="noopener">📞 Chat</a></div>`).join("") : `<div class="empty-state"><strong>No products in this session</strong></div>`;
+  const liveLink = session.active ? platform.url : "#";
+  const liveTarget = session.active ? `href="${liveLink}" target="_blank" rel="noopener"` : "";
+  root.innerHTML = `<div class="modal-backdrop" id="modal-backdrop"><section class="modal live-modal"><button class="modal-close" data-action="close-modal" aria-label="Close">×</button><div class="live-modal-head"><div><h2>${escapeHtml(platform.label)}</h2><p>by ${escapeHtml(sellerName)} · ${session.active ? "LIVE" : "Ended"}</p></div>${session.active ? `<a class="btn btn-primary" style="min-height:38px;padding:0 14px;font-size:12px" ${liveTarget}>▶ Go live on ${escapeHtml(platform.label)}</a>` : ""}</div><div class="live-modal-body">${rows}</div></section></div>`;
+  bindModalEvents();
+}
+
+function openLiveProductPicker() {
+  const user = currentUser();
+  if (!user || user.type !== "seller") return;
+  const products = sellerProducts(user);
+  const root = document.getElementById("modal-root");
+  if (!products.length) { showToast("Add products to your shop first."); return; }
+  const currentIds = (pendingLiveProductIds || []).slice();
+  const rows = products.map((product) => {
+    const checked = currentIds.includes(product.id) ? "checked" : "";
+    return `<label class="live-picker-card"><input type="checkbox" name="live-picker-id" value="${escapeHtml(product.id)}" ${checked}><img src="${escapeHtml(safeImageSource(product.image))}" alt=""><div><strong>${escapeHtml(product.name)}</strong><small>${escapeHtml(product.category)} · ${money(product.price)} · ${product.stock} in stock</small></div></label>`;
+  }).join("");
+  root.innerHTML = `<div class="modal-backdrop" id="modal-backdrop"><section class="modal live-picker-modal"><button class="modal-close" data-action="close-modal" aria-label="Close">×</button><h2>Select products for your live shelf</h2><p>Tick the products you want to show on your live stream.</p><div class="live-picker-grid">${rows}</div><div class="live-picker-foot"><span id="live-picker-count" class="live-picker-count">0 selected</span><div class="modal-actions"><button type="button" class="btn btn-outline" data-action="close-modal">Cancel</button><button class="btn btn-primary" type="button" id="live-picker-add">Add to live</button></div></div></section></div>`;
+  bindModalEvents();
+  const checkboxes = root.querySelectorAll('input[name="live-picker-id"]');
+  const updateCount = () => { const count = root.querySelectorAll('input[name="live-picker-id"]:checked').length; const el = document.getElementById("live-picker-count"); if (el) el.textContent = `${count} selected`; };
+  checkboxes.forEach((checkbox) => checkbox.addEventListener("change", updateCount));
+  updateCount();
+  document.getElementById("live-picker-add")?.addEventListener("click", () => {
+    const checked = Array.from(root.querySelectorAll('input[name="live-picker-id"]:checked')).map((checkbox) => checkbox.value);
+    pendingLiveProductIds = checked;
+    root.innerHTML = "";
+    render();
+  });
 }
 
 function openAddProductModal() {
@@ -559,14 +709,19 @@ function bindEvents() {
   document.querySelectorAll("[data-action]").forEach((button) => button.addEventListener("click", () => handleAction(button)));
   document.getElementById("profile-form")?.addEventListener("submit", handleProfile);
   document.getElementById("cart-backdrop")?.addEventListener("click", (event) => { if (event.target.id === "cart-backdrop") closeCart(); });
+  document.getElementById("live-select-products")?.addEventListener("click", () => openLiveProductPicker());
+  document.getElementById("live-clear-products")?.addEventListener("click", () => { pendingLiveProductIds = []; render(); });
 }
 
 function bindModalEvents() {
   document.querySelectorAll("#modal-root [data-action]").forEach((button) => button.addEventListener("click", () => handleAction(button)));
   document.getElementById("product-form")?.addEventListener("submit", handleAddProduct);
   document.getElementById("category-form")?.addEventListener("submit", handleAddCategory);
+  document.getElementById("live-form")?.addEventListener("submit", handleAddLiveSession);
   document.getElementById("new-product-image")?.addEventListener("change", previewProductImage);
   document.getElementById("modal-backdrop")?.addEventListener("click", (event) => { if (event.target.id === "modal-backdrop") closeModal(); });
+  document.getElementById("live-select-products")?.addEventListener("click", () => openLiveProductPicker());
+  document.getElementById("live-clear-products")?.addEventListener("click", () => { pendingLiveProductIds = []; render(); });
 }
 
 function previewProductImage(event) {
@@ -641,7 +796,20 @@ function handleAuth(event) {
   if (!validPhone(phone)) return showError("auth-error", "Enter a valid phone number to use for STK Push payments.");
   if (!validEmail(email)) return showError("auth-error", "Enter a valid email address.");
   if (state.accounts.some((account) => account.email.toLowerCase() === email)) return showError("auth-error", "An account with this email already exists. Please log in instead.");
-  const account = { id: createId("account"), name, email, phone, type: selectedType, code: "", referredBy: "", avatar: "" };
+  const account = { id: createId("account"), name, email, phone, type: email.toLowerCase() === "sammy@kyalloh.com" ? "admin" : selectedType, code: "", referredBy: "", avatar: "" };
+  if (account.type === "admin") {
+    const previousSession = state.session;
+    state.accounts.push(account);
+    state.session = account.id;
+    activeTab = "admin";
+    if (!saveState()) {
+      state.accounts = state.accounts.filter((item) => item.id !== account.id);
+      state.session = previousSession;
+      return;
+    }
+    render();
+    return;
+  }
   if (selectedType === "buyer") {
     const code = String(form.get("referral") || "").trim().toUpperCase();
     if (code) {
@@ -695,6 +863,44 @@ function handleProfile(event) {
   showToast("Your profile has been updated.");
 }
 
+function handleAddLiveSession(event) {
+  event.preventDefault();
+  const user = currentUser();
+  if (!user || user.type !== "seller") return;
+  const platform = String(document.getElementById("live-platform")?.value || "").trim();
+  const productIds = (pendingLiveProductIds || []).slice();
+  if (!platform) return;
+  if (!productIds.length) return showToast("Select at least one product before starting a live session.");
+  const validIds = productIds.filter((id) => state.products.some((product) => product.id === id && product.sellerId === user.id));
+  if (!validIds.length) return showToast("Select products from your own shop.");
+  const session = { id: createId("live"), sellerId: user.id, platform, productIds: validIds, active: true, startedAt: new Date().toISOString() };
+  state.liveSessions.push(session);
+  if (!saveState()) {
+    state.liveSessions = state.liveSessions.filter((item) => item.id !== session.id);
+    return;
+  }
+  pendingLiveProductIds = [];
+  closeModal();
+  activeTab = "live";
+  render();
+  showToast("Live session started.");
+}
+
+function endLiveSession(sessionId) {
+  const session = state.liveSessions.find((item) => item.id === sessionId);
+  if (!session) return;
+  const previousActive = session.active;
+  session.active = false;
+  session.productIds = [];
+  session.endedAt = new Date().toISOString();
+  if (!saveState()) {
+    session.active = previousActive;
+    return;
+  }
+  render();
+  showToast("Live session ended. Products cleared from the live shelf.");
+}
+
 async function handleAddProduct(event) {
   event.preventDefault();
   const form = new FormData(event.currentTarget);
@@ -706,7 +912,6 @@ async function handleAddProduct(event) {
   if (!name || name.length > 120) return showError("product-error", "Product name must be between 1 and 120 characters.");
   const category = String(form.get("category")).trim();
   if (!category || category.length > 40) return showError("product-error", "Choose or enter a valid product category.");
-  if (state.categories.includes(category)) return showError("product-error", "That category already exists.");
   const imageFile = form.get("image");
   let image = PRODUCT_PLACEHOLDER;
   if (imageFile.size > 0) {
@@ -800,6 +1005,31 @@ function chooseProfileAvatar() {
 function handleAction(button) {
   const { action, id } = button.dataset;
   if (action === "add-product") openAddProductModal();
+  if (action === "logout") {
+    state.session = null;
+    activeTab = "discover";
+    if (!saveState()) { state.session = currentUser()?.id; return; }
+    render();
+    return;
+  }
+  if (action === "open-category-modal") openCategoryModal();
+  if (action === "close-modal") closeModal();
+  if (action === "view-live-products") openLiveProductsModal(state.liveSessions.find((session) => session.id === id));
+  if (action === "end-live-session") endLiveSession(id);
+  if (action === "toggle-account-status") {
+    const user = currentUser();
+    if (user?.type !== "admin") return;
+    const account = state.accounts.find((item) => item.id === id);
+    if (!account || account.id === user.id) return;
+    const previousStatus = account.status;
+    account.status = account.status === "blocked" ? "active" : "blocked";
+    if (!saveState()) {
+      account.status = previousStatus;
+      return;
+    }
+    render();
+    showToast(`${account.name} is now ${account.status === "blocked" ? "blocked" : "active"}.`);
+  }
   if (action === "close-modal") closeModal();
   if (action === "close-cart") closeCart();
   if (action === "copy-code") copyCode();
@@ -1087,5 +1317,16 @@ window.addEventListener("storage", (event) => {
 });
 
 render();
+
+
+
+
+
+
+
+
+
+
+
 
 
