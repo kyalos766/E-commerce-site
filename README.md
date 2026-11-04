@@ -7,20 +7,24 @@ sessions.
 
 ## Create the PostgreSQL database
 
-Install PostgreSQL for Windows and start its service first. The database
-initializer does not install or start PostgreSQL; it connects to your running
-local PostgreSQL server, creates the `markethub` database when missing, and
-applies [`backend/schema.sql`](backend/schema.sql) to create/verify the application
-tables and starter categories.
+The PostgreSQL 18 Windows binaries are installed for the current Windows user
+under `%LOCALAPPDATA%\Programs\PostgreSQL\18`; the data files live under
+`%LOCALAPPDATA%\MarketHub\postgres\data`. This local setup does not require
+Docker or a Windows service.
 
-From the project root:
+Connection settings and a generated local database password are stored in the
+ignored file `backend\.env`. To start PostgreSQL after restarting Windows, run
+from the project root:
 
 ```powershell
-Copy-Item backend\.env.example backend\.env
+$pgBin = Join-Path $env:LOCALAPPDATA 'Programs\PostgreSQL\18\pgsql\bin'
+$data = Join-Path $env:LOCALAPPDATA 'MarketHub\postgres\data'
+$log = Join-Path $env:LOCALAPPDATA 'MarketHub\postgres\postgresql.log'
+& "$pgBin\pg_ctl.exe" start -D $data -l $log -o "-h 127.0.0.1 -p 5432" -w
 ```
 
-Edit `backend\.env` and replace `CHANGE_ME` in both connection URLs with the
-password for your PostgreSQL user. Then run:
+Install the Python dependencies if needed, create/verify the database and
+tables, and start the backend:
 
 ```powershell
 python -m pip install -r backend\requirements.txt
@@ -28,12 +32,15 @@ python -m backend.init_db
 python -m uvicorn backend.main:app --reload
 ```
 
-Open `http://127.0.0.1:8000`. Confirm the API and database connection at
-`http://127.0.0.1:8000/api/health`.
+The website is at `http://127.0.0.1:8000`. Verify the API/database at
+`http://127.0.0.1:8000/api/health`. To stop PostgreSQL, first stop the backend,
+then run:
 
-The PostgreSQL user in `POSTGRES_ADMIN_URL` must be allowed to create databases.
-Set both connection URLs in `backend\.env` if you use a different local
-PostgreSQL user or port. Keep `backend\.env` private; it is ignored by Git.
+```powershell
+& "$pgBin\pg_ctl.exe" stop -D $data -m fast
+```
+
+Keep `backend\.env` private; it is ignored by Git.
 
 ## Tests
 
